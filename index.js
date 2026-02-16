@@ -71,35 +71,62 @@ client.on('messageCreate', message => {
   const msg = message.content.toLowerCase();
   let data = loadData();
 
-  if (msg === "online") {
-    data[message.author.id] = Date.now();
-    saveData(data);
+  if (content === "online") {
 
-    const embed = new EmbedBuilder()
-      .setTitle("Attendance Marked")
-      .setDescription(`<@${message.author.id}> is now ONLINE`)
-      .setColor("Green");
+  if (data[userId].start) return;
 
-    message.reply({ embeds: [embed] });
-  }
+  await message.delete().catch(() => {});
 
-  if (msg === "offline") {
-    if (!data[message.author.id]) return;
+  data[userId].start = Date.now();
+  triggerSource[userId] = "message";
+  saveData();
 
-    let duration = Date.now() - data[message.author.id];
-    delete data[message.author.id];
-    saveData(data);
+  setTimeout(() => {
 
-    const minutes = Math.floor(duration / 60000);
+    message.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor("Green")
+          .setDescription(`🟢 <@${userId}> is now **ONLINE**`)
+          .setTimestamp()
+      ]
+    });
 
-    const embed = new EmbedBuilder()
-      .setTitle("Attendance Ended")
-      .setDescription(`<@${message.author.id}> was online for ${minutes} mins`)
-      .setColor("Red");
+  }, 400);
+}
+  if (content === "offline") {
 
-    message.reply({ embeds: [embed] });
-  }
-});
+  if (!data[userId].start) return;
+
+  const startTime = data[userId].start;
+  const endTime = Date.now();
+  const duration = endTime - startTime;
+
+  await message.delete().catch(() => {});
+
+  data[userId].total += duration;
+  data[userId].start = null;
+  triggerSource[userId] = null;
+  saveData();
+
+  setTimeout(() => {
+
+    message.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor("Red")
+          .setDescription(
+            `🔴 <@${userId}> is now **OFFLINE**\n\n` +
+            `🟢 Online: ${time(startTime)}\n` +
+            `🔴 Offline: ${time(endTime)}\n` +
+            `⏱ Duration: ${format(duration)}`
+          )
+          .setTimestamp()
+      ]
+    });
+
+  }, 400);
+}
 
 // ---------------- SLASH RESPONSE ----------------
 client.on('interactionCreate', async interaction => {
