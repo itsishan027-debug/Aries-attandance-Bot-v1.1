@@ -103,8 +103,6 @@ const commands = [
     .setName('troubleshoot')
     .setDescription('Check bot health')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-
-  new SlashCommandBuilder().setName("help").setDescription("How to use the attendance bot")
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
