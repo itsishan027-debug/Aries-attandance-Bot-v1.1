@@ -1,28 +1,16 @@
-const { 
-  Client, 
-  GatewayIntentBits, 
-  EmbedBuilder, 
-  SlashCommandBuilder, 
-  REST, 
-  Routes 
-} = require("discord.js");
-const express = require("express");
-const fs = require("fs");
+const {
+  Client,
+  GatewayIntentBits,
+  SlashCommandBuilder,
+  REST,
+  Routes,
+  PermissionFlagsBits
+} = require('discord.js');
 
-// ================== EXPRESS ==================
-const app = express();
-const PORT = process.env.PORT || 3000;
-app.get("/", (req, res) => res.send("Bot is running 24/7"));
-app.listen(PORT, () => console.log("Web server started"));
-
-// ================== CONFIG ==================
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 
-const TARGET_SERVER_ID = "770004215678369883";
-const TARGET_CHANNEL_ID = "1426247870495068343";
-
-// ================== CLIENT ==================
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -31,243 +19,166 @@ const client = new Client({
   ]
 });
 
-// ================== DATA ==================
 let data = {};
-const FILE = "./attendance.json";
+let triggerSource = {};
 
-function loadData() {
-  if (fs.existsSync(FILE)) {
-    data = JSON.parse(fs.readFileSync(FILE));
+// ================== FUNCTIONS ==================
+function ensureUser(id) {
+  if (!data[id]) {
+    data[id] = {
+      start: null,
+      total: 0
+    };
   }
 }
-function saveData() {
-  fs.writeFileSync(FILE, JSON.stringify(data, null, 2));
-}
-loadData();
 
-// ================== HELPERS ==================
 function format(ms) {
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  return `${h}h ${m}m`;
+  let sec = Math.floor(ms / 1000);
+  let min = Math.floor(sec / 60);
+  let hr = Math.floor(min / 60);
+  sec %= 60;
+  min %= 60;
+  return `${hr}h ${min}m ${sec}s`;
 }
 
-function time(ts) {
-  return `<t:${Math.floor(ts / 1000)}:t>`;
+function saveData() {
+  console.log("Data Saved");
 }
 
-// ================== SLASH COMMANDS ==================
+// ================== SLASH COMMAND REGISTER ==================
 const commands = [
-  new SlashCommandBuilder().setName("online").setDescription("Start your attendance"),
-  new SlashCommandBuilder().setName("offline").setDescription("Stop your attendance"),
-  new SlashCommandBuilder().setName("status").setDescription("Check your attendance"),
-  new SlashCommandBuilder().setName("history").setDescription("View your recent sessions"),
-  new SlashCommandBuilder().setName("help").setDescription("How to use the attendance bot")
+  new SlashCommandBuilder()
+    .setName('online')
+    .setDescription('Mark yourself online'),
+
+  new SlashCommandBuilder()
+    .setName('offline')
+    .setDescription('Mark yourself offline'),
+
+  new SlashCommandBuilder()
+    .setName('resetall')
+    .setDescription('Reset all attendance')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('troubleshoot')
+    .setDescription('Check bot health')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ].map(cmd => cmd.toJSON());
 
-const rest = new REST({ version: "10" }).setToken(TOKEN);
+const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 (async () => {
   await rest.put(
-    Routes.applicationCommands(CLIENT_ID),
+    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
     { body: commands }
   );
-  console.log("Slash commands registered");
 })();
 
-// ================== CORE FUNCTIONS ==================
-function ensureUser(id) {
-  if (!data[id]) {
-    data[id] = { total: 0, start: null, sessions: [] };
-  }
-}
-
-// ================== TEXT COMMANDS ==================
+// ================== MESSAGE COMMAND ==================
 client.on("messageCreate", async (message) => {
+
   if (message.author.bot) return;
-  if (!message.guild || message.guild.id !== TARGET_SERVER_ID) return;
-  if (message.channel.id !== TARGET_CHANNEL_ID) return;
 
   const content = message.content.toLowerCase();
   const userId = message.author.id;
+
   ensureUser(userId);
 
-  // ONLINE
   if (content === "online") {
-    await message.delete().catch(() => {});
+
+    if (triggerSource[userId] === "slash") return;
     if (data[userId].start) return;
 
+    triggerSource[userId] = "message";
     data[userId].start = Date.now();
     saveData();
 
-    return message.channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Green")
-          .setDescription(`🟢 <@${userId}> is now **ONLINE**`)
-          .setTimestamp()
-      ]
-    });
+    return message.channel.send(`🟢 <@${userId}> is now ONLINE`);
   }
 
-  // OFFLINE
   if (content === "offline") {
-    await message.delete().catch(() => {});
+
+    if (triggerSource[userId] === "slash") return;
     if (!data[userId].start) return;
 
     const end = Date.now();
     const duration = end - data[userId].start;
 
     data[userId].total += duration;
-    data[userId].sessions.push({
-      start: data[userId].start,
-      end,
-      duration
-    });
-
     data[userId].start = null;
     saveData();
+    triggerSource[userId] = null;
 
-    return message.channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Red")
-          .setDescription(
-            `🔴 <@${userId}> is now **OFFLINE**\n\n` +
-            `🟢 Online: ${time(data[userId].sessions.at(-1).start)}\n` +
-            `🔴 Offline: ${time(end)}\n` +
-            `⏱ Duration: ${format(duration)}`
-          )
-          .setTimestamp()
-      ]
-    });
+    return message.channel.send(`🔴 <@${userId}> is now OFFLINE\n⏱ Duration: ${format(duration)}`);
   }
 });
 
-// ================== SLASH COMMAND HANDLER ==================
-client.on("interactionCreate", async (interaction) => {
+// ================== SLASH COMMAND ==================
+client.on('interactionCreate', async interaction => {
+
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.guildId !== TARGET_SERVER_ID) return;
-  if (interaction.channelId !== TARGET_CHANNEL_ID) {
-    return interaction.reply({ content: "Wrong channel", ephemeral: true });
-  }
 
   const userId = interaction.user.id;
   ensureUser(userId);
 
-  // /online
-  if (interaction.commandName === "online") {
-    if (data[userId].start)
-      return interaction.reply({ content: "You are already online.", ephemeral: true });
+  if (interaction.commandName === 'online') {
 
+    if (triggerSource[userId] === "message")
+      return interaction.reply({ content: "❌ Started via message.", ephemeral: true });
+
+    if (data[userId].start)
+      return interaction.reply({ content: "Already online", ephemeral: true });
+
+    triggerSource[userId] = "slash";
     data[userId].start = Date.now();
     saveData();
 
-    return interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Green")
-          .setDescription(`🟢 <@${userId}> is now **ONLINE**`)
-          .setTimestamp()
-      ]
-    });
+    return interaction.reply(`🟢 ${interaction.user.username} is now ONLINE`);
   }
 
-  // /offline
-  if (interaction.commandName === "offline") {
+  if (interaction.commandName === 'offline') {
+
+    if (triggerSource[userId] === "message")
+      return interaction.reply({ content: "❌ Started via message.", ephemeral: true });
+
     if (!data[userId].start)
-      return interaction.reply({ content: "You are not online.", ephemeral: true });
+      return interaction.reply({ content: "You are not online", ephemeral: true });
 
     const end = Date.now();
     const duration = end - data[userId].start;
 
     data[userId].total += duration;
-    data[userId].sessions.push({
-      start: data[userId].start,
-      end,
-      duration
-    });
-
     data[userId].start = null;
     saveData();
+    triggerSource[userId] = null;
 
-    return interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Red")
-          .setDescription(
-            `🔴 <@${userId}> is now **OFFLINE**\n\n` +
-            `🟢 Online: ${time(data[userId].sessions.at(-1).start)}\n` +
-            `🔴 Offline: ${time(end)}\n` +
-            `⏱ Duration: ${format(duration)}`
-          )
-          .setTimestamp()
-      ]
-    });
+    return interaction.reply(`🔴 ${interaction.user.username} is now OFFLINE\n⏱ Duration: ${format(duration)}`);
   }
 
-  // /status
-  if (interaction.commandName === "status") {
-    return interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Blue")
-          .setTitle("📊 Attendance Status")
-          .setDescription(
-            `Total Time: ${format(data[userId].total)}\n` +
-            `Currently Online: ${data[userId].start ? "Yes" : "No"}`
-          )
-          .setTimestamp()
-      ]
-    });
+  if (interaction.commandName === 'resetall') {
+    data = {};
+    return interaction.reply("All attendance data reset.");
   }
 
-  // /history
-  if (interaction.commandName === "history") {
-    const sessions = data[userId].sessions.slice(-5).reverse();
+  if (interaction.commandName === 'troubleshoot') {
 
-    if (!sessions.length)
-      return interaction.reply({ content: "No attendance history found.", ephemeral: true });
-
-    const desc = sessions.map((s, i) =>
-      `**${i + 1}.** 🟢 ${time(s.start)} → 🔴 ${time(s.end)} | ${format(s.duration)}`
-    ).join("\n");
+    const uptime = process.uptime();
+    const memoryUsage = process.memoryUsage().heapUsed / 1024 / 1024;
+    const totalUsers = Object.keys(data).length;
+    const ping = client.ws.ping;
 
     return interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Purple")
-          .setTitle("🕒 Attendance History")
-          .setDescription(desc)
-          .setTimestamp()
-      ]
-    });
-  }
-
-  // /help
-  if (interaction.commandName === "help") {
-    return interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Gold")
-          .setTitle("📌 Attendance Bot Help")
-          .setDescription(
-            "**Commands:**\n" +
-            "`online` or `/online` → Start attendance\n" +
-            "`offline` or `/offline` → Stop attendance\n" +
-            "`/status` → Check your total time\n" +
-            "`/history` → View online-offline timings\n\n" +
-            "**Tip:** Text and slash commands both work!"
-          )
-      ],
+      content:
+`🛠 BOT REPORT
+Users: ${totalUsers}
+Ping: ${ping}ms
+RAM: ${memoryUsage.toFixed(2)} MB
+Uptime: ${Math.floor(uptime)} sec`,
       ephemeral: true
     });
   }
-});
 
-// ================== LOGIN ==================
-client.once("ready", () =>
-  console.log(`Logged in as ${client.user.tag}`)
-);
+});
 
 client.login(TOKEN);
