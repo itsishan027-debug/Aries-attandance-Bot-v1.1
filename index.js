@@ -122,40 +122,63 @@ client.once("ready", async () => {
 
 // ================= MESSAGE =================
 client.on("messageCreate", async (message) => {
-
   if (message.author.bot) return;
+  if (!message.guild || message.guild.id !== TARGET_SERVER_ID) return;
+  if (message.channel.id !== TARGET_CHANNEL_ID) return;
 
   const content = message.content.toLowerCase();
   const userId = message.author.id;
-
   ensureUser(userId);
 
+  // ONLINE
   if (content === "online") {
-
-    if (triggerSource[userId] === "slash") return;
+    await message.delete().catch(() => {});
     if (data[userId].start) return;
 
-    triggerSource[userId] = "message";
     data[userId].start = Date.now();
     saveData();
 
-    return message.channel.send(`🟢 <@${userId}> is now ONLINE`);
+    return message.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor("Green")
+          .setDescription(`🟢 <@${userId}> is now **ONLINE**`)
+          .setTimestamp()
+      ]
+    });
   }
 
+  // OFFLINE
   if (content === "offline") {
-
-    if (triggerSource[userId] === "slash") return;
+    await message.delete().catch(() => {});
     if (!data[userId].start) return;
 
     const end = Date.now();
     const duration = end - data[userId].start;
 
     data[userId].total += duration;
+    data[userId].sessions.push({
+      start: data[userId].start,
+      end,
+      duration
+    });
+
     data[userId].start = null;
-    triggerSource[userId] = null;
     saveData();
 
-    return message.channel.send(`🔴 <@${userId}> is now OFFLINE\n⏱ Duration: ${format(duration)}`);
+    return message.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor("Red")
+          .setDescription(
+            `🔴 <@${userId}> is now **OFFLINE**\n\n` +
+            `🟢 Online: ${time(data[userId].sessions.at(-1).start)}\n` +
+            `🔴 Offline: ${time(end)}\n` +
+            `⏱ Duration: ${format(duration)}`
+          )
+          .setTimestamp()
+      ]
+    });
   }
 });
 
