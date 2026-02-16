@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node index.js"
   },
-  "author": "Aries Intelligence Bureau",
+  "author": "A I B",
   "license": "ISC",
   "dependencies": {
     "discord.js": "^14.14.1"
