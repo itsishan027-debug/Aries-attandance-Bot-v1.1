@@ -32,6 +32,14 @@ function saveData(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
+// Helper to format duration (ms to HH:mm:ss)
+function formatDuration(ms) {
+  const seconds = Math.floor((ms / 1000) % 60);
+  const minutes = Math.floor((ms / (1000 * 60)) % 60);
+  const hours = Math.floor(ms / (1000 * 60 * 60));
+  return `${hours}h ${minutes}m ${seconds}s`;
+}
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -40,7 +48,7 @@ const client = new Client({
   ]
 });
 
-// ---------------- SLASH COMMAND ----------------
+// ---------------- SLASH COMMAND REGISTRATION ----------------
 const commands = [
   new SlashCommandBuilder()
     .setName('troubleshoot')
@@ -52,36 +60,36 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 (async () => {
   try {
-    await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: commands }
-    );
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
     console.log("Slash command registered");
   } catch (err) {
-    console.error(err);
+    console.error("Error registering commands:", err);
   }
 })();
 
 // ---------------- MESSAGE TRIGGER ----------------
-client.on('messageCreate', message => {
+client.on('messageCreate', async message => {
   if (message.author.bot) return;
   if (!message.guild || message.guild.id !== TARGET_SERVER_ID) return;
   if (message.channel.id !== TARGET_CHANNEL_ID) return;
 
-  const msg = message.content.toLowerCase();
+  const content = message.content.toLowerCase();
+  const userId = message.author.id;
   let data = loadData();
 
+  // Initialize user if they don't exist in DB
+  if (!data[userId]) {
+    data[userId] = { start: null, total: 0 };
+  }
+
+  // ONLINE TRIGGER
   if (content === "online") {
+    if (data[userId].start) return; // Already online
 
-  if (data[userId].start) return;
+    data[userId].start = Date.now();
+    saveData(data);
 
-  await message.delete().catch(() => {});
-
-  data[userId].start = Date.now();
-  triggerSource[userId] = "message";
-  saveData();
-
-  setTimeout(() => {
+    await message.delete().catch(() => {});
 
     message.channel.send({
       embeds: [
@@ -91,25 +99,21 @@ client.on('messageCreate', message => {
           .setTimestamp()
       ]
     });
+  }
 
-  }, 400);
-}
+  // OFFLINE TRIGGER
   if (content === "offline") {
+    if (!data[userId].start) return; // Wasn't online
 
-  if (!data[userId].start) return;
+    const startTime = data[userId].start;
+    const endTime = Date.now();
+    const duration = endTime - startTime;
 
-  const startTime = data[userId].start;
-  const endTime = Date.now();
-  const duration = endTime - startTime;
+    data[userId].total += duration;
+    data[userId].start = null;
+    saveData(data);
 
-  await message.delete().catch(() => {});
-
-  data[userId].total += duration;
-  data[userId].start = null;
-  triggerSource[userId] = null;
-  saveData();
-
-  setTimeout(() => {
+    await message.delete().catch(() => {});
 
     message.channel.send({
       embeds: [
@@ -117,16 +121,15 @@ client.on('messageCreate', message => {
           .setColor("Red")
           .setDescription(
             `🔴 <@${userId}> is now **OFFLINE**\n\n` +
-            `🟢 Online: ${time(startTime)}\n` +
-            `🔴 Offline: ${time(endTime)}\n` +
-            `⏱ Duration: ${format(duration)}`
+            `🟢 Online: <t:${Math.floor(startTime / 1000)}:t>\n` +
+            `🔴 Offline: <t:${Math.floor(endTime / 1000)}:t>\n` +
+            `⏱ Duration: **${formatDuration(duration)}**`
           )
           .setTimestamp()
       ]
     });
-
-  }, 400);
-}
+  }
+});
 
 // ---------------- SLASH RESPONSE ----------------
 client.on('interactionCreate', async interaction => {
