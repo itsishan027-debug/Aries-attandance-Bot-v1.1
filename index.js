@@ -7,9 +7,13 @@ const {
   PermissionFlagsBits
 } = require('discord.js');
 
+const fs = require('fs');
+
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
+
+const DB_FILE = './attendance.json';
 
 const client = new Client({
   intents: [
@@ -21,6 +25,45 @@ const client = new Client({
 
 let data = {};
 let triggerSource = {};
+
+// ================= AUTO JSON CREATE =================
+function loadData() {
+
+  if (!fs.existsSync(DB_FILE)) {
+
+    fs.writeFileSync(DB_FILE, JSON.stringify({
+      users:{},
+      triggerSource:{}
+    }, null, 2));
+
+    console.log("attendance.json created automatically");
+  }
+
+  try {
+
+    const raw = fs.readFileSync(DB_FILE);
+    const parsed = JSON.parse(raw);
+
+    data = parsed.users || {};
+    triggerSource = parsed.triggerSource || {};
+
+  } catch {
+
+    console.log("JSON corrupt — repairing...");
+
+    data = {};
+    triggerSource = {};
+
+    saveData();
+  }
+}
+
+function saveData() {
+  fs.writeFileSync(DB_FILE, JSON.stringify({
+    users:data,
+    triggerSource:triggerSource
+  }, null, 2));
+}
 
 // ================== FUNCTIONS ==================
 function ensureUser(id) {
@@ -41,11 +84,7 @@ function format(ms) {
   return `${hr}h ${min}m ${sec}s`;
 }
 
-function saveData() {
-  console.log("Data Saved");
-}
-
-// ================== SLASH COMMAND REGISTER ==================
+// ================== SLASH COMMAND ==================
 const commands = [
   new SlashCommandBuilder()
     .setName('online')
@@ -68,14 +107,20 @@ const commands = [
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
-(async () => {
+// ================= SAFE START =================
+client.once("ready", async () => {
+
+  console.log(`Logged in as ${client.user.tag}`);
+
+  loadData();
+
   await rest.put(
     Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
     { body: commands }
   );
-})();
+});
 
-// ================== MESSAGE COMMAND ==================
+// ================= MESSAGE =================
 client.on("messageCreate", async (message) => {
 
   if (message.author.bot) return;
@@ -107,14 +152,14 @@ client.on("messageCreate", async (message) => {
 
     data[userId].total += duration;
     data[userId].start = null;
-    saveData();
     triggerSource[userId] = null;
+    saveData();
 
     return message.channel.send(`🔴 <@${userId}> is now OFFLINE\n⏱ Duration: ${format(duration)}`);
   }
 });
 
-// ================== SLASH COMMAND ==================
+// ================= SLASH =================
 client.on('interactionCreate', async interaction => {
 
   if (!interaction.isChatInputCommand()) return;
@@ -150,14 +195,16 @@ client.on('interactionCreate', async interaction => {
 
     data[userId].total += duration;
     data[userId].start = null;
-    saveData();
     triggerSource[userId] = null;
+    saveData();
 
     return interaction.reply(`🔴 ${interaction.user.username} is now OFFLINE\n⏱ Duration: ${format(duration)}`);
   }
 
   if (interaction.commandName === 'resetall') {
     data = {};
+    triggerSource = {};
+    saveData();
     return interaction.reply("All attendance data reset.");
   }
 
@@ -179,6 +226,15 @@ Uptime: ${Math.floor(uptime)} sec`,
     });
   }
 
+});
+
+// ================= CRASH PROTECTION =================
+process.on('uncaughtException', err => {
+  console.log('CRASH ERROR:', err);
+});
+
+process.on('unhandledRejection', err => {
+  console.log('PROMISE ERROR:', err);
 });
 
 client.login(TOKEN);
